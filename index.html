@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSV 변환 도구</title>
+<script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', sans-serif;
+  background: #f5f4ef; color: #1a1a18;
+  min-height: 100vh; padding: 2rem 1rem;
+}
+.container { max-width: 700px; margin: 0 auto; }
+h1 { font-size: 22px; font-weight: 500; margin-bottom: 0.25rem; }
+.subtitle { font-size: 14px; color: #5f5e5a; margin-bottom: 1.5rem; }
+
+/* ── 탭 ── */
+.tabs { display: flex; border-bottom: 1.5px solid #d3d1c7; margin-bottom: 1.5rem; }
+.tab-btn {
+  padding: 9px 22px; font-size: 14px; font-family: inherit;
+  background: none; border: none; border-bottom: 2.5px solid transparent;
+  cursor: pointer; color: #888780; margin-bottom: -1.5px; transition: color 0.12s;
+}
+.tab-btn:hover { color: #1a1a18; }
+.tab-btn.active { color: #185fa5; border-bottom-color: #185fa5; font-weight: 500; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── init bar ── */
+.init-bar {
+  display: flex; align-items: center; gap: 10px; font-size: 13px; color: #854f0b;
+  background: #faeeda; border-radius: 8px; padding: 10px 14px; margin-bottom: 1.5rem;
+}
+.init-bar.hidden { display: none; }
+.spinner {
+  width: 16px; height: 16px; flex-shrink: 0;
+  border: 2px solid #f0c878; border-top-color: #854f0b;
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 모드 토글 ── */
+.mode-toggle {
+  display: flex; gap: 0; margin-bottom: 1.25rem;
+  background: #f1efe8; border-radius: 9px; padding: 3px; width: fit-content;
+}
+.mode-btn {
+  padding: 7px 20px; font-size: 13px; font-family: inherit;
+  border: none; border-radius: 7px; cursor: pointer;
+  background: transparent; color: #888780; transition: all 0.15s;
+}
+.mode-btn.active { background: #fff; color: #1a1a18; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+/* ── 카드 ── */
+.card {
+  background: #fff; border: 0.5px solid #d3d1c7;
+  border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem;
+}
+.card-title {
+  font-size: 12px; font-weight: 500; color: #888780;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px;
+}
+.folder-row { display: flex; align-items: center; gap: 10px; }
+.folder-row + .folder-row { margin-top: 10px; }
+.folder-path {
+  flex: 1; min-width: 0; font-size: 13px; color: #1a1a18;
+  background: #f5f4ef; border: 0.5px solid #d3d1c7; border-radius: 8px;
+  padding: 8px 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.folder-path.empty { color: #888780; font-style: italic; }
+
+/* ── 드롭존 ── */
+.drop-zone {
+  border: 1.5px dashed #b4b2a9; border-radius: 12px; background: #fff;
+  padding: 2rem; text-align: center; cursor: pointer;
+  transition: border-color 0.15s, background 0.15s; margin-bottom: 1rem;
+}
+.drop-zone.drag-over { border-color: #378add; background: #f0f7fe; }
+.drop-zone.disabled  { opacity: 0.45; pointer-events: none; }
+.drop-zone input[type=file] { display: none; }
+.drop-icon {
+  width: 36px; height: 36px; margin: 0 auto 10px;
+  border: 1.5px solid #b4b2a9; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.drop-zone p   { font-size: 14px; color: #1a1a18; margin-bottom: 4px; }
+.drop-zone span { font-size: 12px; color: #888780; }
+
+/* ── 파일 목록 ── */
+.file-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 1rem; }
+.file-item {
+  background: #fff; border: 0.5px solid #d3d1c7; border-radius: 9px;
+  padding: 10px 14px; display: flex; align-items: center; gap: 10px;
+}
+.file-icon {
+  width: 30px; height: 30px; flex-shrink: 0; background: #e6f1fb; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 500; color: #185fa5;
+}
+.file-info { flex: 1; min-width: 0; }
+.file-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-meta { font-size: 11px; color: #888780; margin-top: 2px; }
+.file-status { font-size: 11px; padding: 2px 9px; border-radius: 20px; white-space: nowrap; }
+.s-ready      { background: #f1efe8; color: #5f5e5a; }
+.s-done       { background: #eaf3de; color: #3b6d11; }
+.s-error      { background: #fcebeb; color: #a32d2d; }
+.s-processing { background: #faeeda; color: #854f0b; }
+.btn-remove { background: none; border: none; cursor: pointer; font-size: 15px; color: #b4b2a9; padding: 3px; line-height: 1; }
+.btn-remove:hover { color: #e24b4a; }
+
+/* ── 옵션 바 ── */
+.options-bar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 1.25rem; flex-wrap: wrap;
+}
+.options-bar label { font-size: 13px; color: #5f5e5a; }
+select {
+  font-size: 13px; padding: 6px 10px; border: 0.5px solid #ccc;
+  border-radius: 8px; background: #fff; cursor: pointer;
+}
+
+/* ── 버튼 ── */
+.btn {
+  padding: 8px 16px; font-size: 13px; border-radius: 8px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+  transition: background 0.1s, transform 0.1s;
+}
+.btn:active { transform: scale(0.97); }
+.btn-outline { background: #fff; color: #1a1a18; border: 0.5px solid #b4b2a9; }
+.btn-outline:hover { background: #f1efe8; }
+.btn-outline:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+.btn-run {
+  width: 100%; padding: 12px; font-size: 15px; font-weight: 500;
+  background: #185fa5; color: #fff; border: none; border-radius: 10px;
+  cursor: pointer; font-family: inherit;
+  transition: background 0.1s, transform 0.1s; margin-bottom: 1.25rem;
+}
+.btn-run:hover { background: #0c447c; }
+.btn-run:active { transform: scale(0.99); }
+.btn-run:disabled { background: #b4b2a9; cursor: not-allowed; transform: none; }
+
+/* ── 진행률 ── */
+.progress-wrap {
+  background: #fff; border: 0.5px solid #d3d1c7; border-radius: 12px;
+  padding: 1.25rem; margin-bottom: 1rem; display: none;
+}
+.progress-wrap.visible { display: block; }
+.progress-header { display: flex; justify-content: space-between; font-size: 13px; color: #5f5e5a; margin-bottom: 8px; }
+.progress-bar-bg { height: 6px; background: #f1efe8; border-radius: 4px; overflow: hidden; }
+.progress-bar-fill { height: 100%; background: #185fa5; border-radius: 4px; transition: width 0.2s; width: 0%; }
+
+/* ── 요약 ── */
+.summary-bar { display: none; gap: 10px; margin-bottom: 1rem; }
+.summary-bar.visible { display: flex; }
+.stat-card { flex: 1; background: #fff; border: 0.5px solid #d3d1c7; border-radius: 10px; padding: 12px; text-align: center; }
+.stat-num   { font-size: 24px; font-weight: 500; }
+.stat-label { font-size: 12px; color: #888780; margin-top: 2px; }
+.stat-ok  .stat-num { color: #3b6d11; }
+.stat-err .stat-num { color: #a32d2d; }
+.stat-all .stat-num { color: #185fa5; }
+
+/* ── 로그 ── */
+.log-box {
+  background: #2c2c2a; color: #d3d1c7; border-radius: 10px;
+  padding: 1rem 1.25rem; font-size: 12px; font-family: monospace;
+  max-height: 200px; overflow-y: auto; display: none;
+}
+.log-box.visible { display: block; }
+.log-line { margin-bottom: 3px; line-height: 1.6; }
+.log-ok   { color: #97c459; }
+.log-err  { color: #f09595; }
+.log-info { color: #85b7eb; }
+.log-warn { color: #fac775; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>CSV 변환 도구</h1>
+  <p class="subtitle">인코딩 일괄 변환 · 소재 파일 가공</p>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="enc">인코딩 변환</button>
+    <button class="tab-btn"        data-tab="split">소재 파일 가공</button>
+  </div>
+
+  <!-- ══════════════════════════ 탭 1: 인코딩 변환 ══════════════════════════ -->
+  <div class="tab-panel active" id="tab-enc">
+
+    <div class="init-bar" id="initBar">
+      <div class="spinner"></div>
+      <span id="initMsg">CP949 변환 테이블 준비 중...</span>
+    </div>
+
+    <!-- 모드 토글 -->
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="modeFolder">📁 폴더</button>
+      <button class="mode-btn"        id="modeFile">📄 파일</button>
+    </div>
+
+    <!-- 폴더 모드 UI -->
+    <div id="uiFolder">
+      <div class="card">
+        <div class="card-title">폴더 선택</div>
+        <div class="folder-row">
+          <div class="folder-path empty" id="srcPath">입력 폴더를 선택하세요</div>
+          <button class="btn btn-outline" id="srcBtn" disabled>입력 폴더 선택</button>
+        </div>
+        <div class="folder-row">
+          <div class="folder-path empty" id="dstPath">출력 폴더를 선택하세요</div>
+          <button class="btn btn-outline" id="dstBtn" disabled>출력 폴더 선택</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 파일 모드 UI -->
+    <div id="uiFile" style="display:none;">
+      <div class="drop-zone disabled" id="encDropZone">
+        <input type="file" id="encFileInput" accept=".csv" multiple>
+        <div class="drop-icon">📄</div>
+        <p>CSV 파일을 끌어다 놓거나 클릭해서 선택</p>
+        <span>여러 파일 동시 업로드 가능 · 변환 후 자동 다운로드</span>
+      </div>
+      <div class="file-list" id="encFileList"></div>
+    </div>
+
+    <!-- 공통 옵션 -->
+    <div class="options-bar">
+      <label>변환 목표 인코딩</label>
+      <select id="targetEnc">
+        <option value="euc-kr">CP949 / EUC-KR (한국어 Windows · Excel)</option>
+        <option value="utf-8-bom">UTF-8 BOM (Excel 호환 UTF-8)</option>
+        <option value="utf-8">UTF-8 (BOM 없음)</option>
+      </select>
+      <label style="margin-left:4px;">줄바꿈</label>
+      <select id="lineEnd">
+        <option value="LF">LF</option>
+        <option value="CRLF">CRLF</option>
+      </select>
+    </div>
+
+    <button class="btn-run" id="convertBtn" disabled>변환 시작</button>
+
+    <div class="progress-wrap" id="encProgress">
+      <div class="progress-header">
+        <span id="encLabel">처리 중...</span>
+        <span id="encPct">0%</span>
+      </div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="encFill"></div></div>
+    </div>
+
+    <div class="summary-bar" id="encSummary">
+      <div class="stat-card stat-all"><div class="stat-num" id="encTotal">0</div><div class="stat-label">전체</div></div>
+      <div class="stat-card stat-ok"> <div class="stat-num" id="encOk">0</div>   <div class="stat-label">성공</div></div>
+      <div class="stat-card stat-err"><div class="stat-num" id="encErr">0</div>  <div class="stat-label">실패</div></div>
+    </div>
+
+    <div class="log-box" id="encLog"></div>
+  </div>
+
+  <!-- ══════════════════════════ 탭 2: 소재 파일 가공 ══════════════════════════ -->
+  <div class="tab-panel" id="tab-split">
+
+    <div class="drop-zone" id="splitDrop">
+      <input type="file" id="splitFile" accept=".xlsx,.csv">
+      <div class="drop-icon">📊</div>
+      <p>소재 파일을 끌어다 놓거나 클릭해서 선택</p>
+      <span>.xlsx 또는 .csv 파일 지원</span>
+      <div id="splitFileName" style="display:none; margin-top:8px; font-size:14px; font-weight:500; color:#0f6e56;"></div>
+    </div>
+
+    <button class="btn-run" id="splitBtn" disabled>열 분리 및 다운로드</button>
+
+    <div class="summary-bar" id="splitSummary">
+      <div class="stat-card stat-all"><div class="stat-num" id="splitTotal">0</div><div class="stat-label">전체 행</div></div>
+      <div class="stat-card stat-ok"> <div class="stat-num" id="splitOk">0</div>   <div class="stat-label">정상 처리</div></div>
+      <div class="stat-card stat-err"><div class="stat-num" id="splitFilled">0</div><div class="stat-label">상품코드 자동추출</div></div>
+    </div>
+
+    <div class="log-box" id="splitLog"></div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════
+   CP949 테이블
+════════════════════════════════════════════════ */
+let cp949Table = null;
+
+async function buildCP949Table() {
+  const table = new Map();
+  const dec = new TextDecoder('euc-kr');
+  const total = 0xFE - 0x81 + 1; let done = 0;
+  for (let b1 = 0x81; b1 <= 0xFE; b1++) {
+    for (let b2 = 0x40; b2 <= 0xFE; b2++) {
+      if (b2 === 0x7F) continue;
+      const buf = new Uint8Array([b1, b2]);
+      const ch = dec.decode(buf);
+      if (ch.length === 1 && ch.charCodeAt(0) !== 0xFFFD) table.set(ch.charCodeAt(0), buf.slice());
+    }
+    done++;
+    if (done % 8 === 0) {
+      document.getElementById('initMsg').textContent = `CP949 변환 테이블 준비 중... ${Math.round(done/total*100)}%`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  return table;
+}
+
+function encodeCP949(text) {
+  const out = [];
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) out.push(c);
+    else if (cp949Table.has(c)) { const b = cp949Table.get(c); out.push(b[0], b[1]); }
+    else out.push(0x3F);
+  }
+  return new Uint8Array(out);
+}
+
+function encodeToTarget(text, target) {
+  if (target === 'utf-8') return new TextEncoder().encode(text);
+  if (target === 'utf-8-bom') {
+    const u = new TextEncoder().encode(text);
+    const o = new Uint8Array(3 + u.length);
+    o[0]=0xEF; o[1]=0xBB; o[2]=0xBF; o.set(u,3); return o;
+  }
+  if (target === 'euc-kr') return encodeCP949(text);
+  throw new Error('알 수 없는 인코딩: ' + target);
+}
+
+/* ════════════════════════════════════════════════
+   공통 유틸
+════════════════════════════════════════════════ */
+function detectAndDecode(bytes) {
+  if (bytes[0]===0xEF && bytes[1]===0xBB && bytes[2]===0xBF)
+    return { enc:'UTF-8 BOM', text: new TextDecoder('utf-8').decode(bytes.slice(3)) };
+  if (bytes[0]===0xFF && bytes[1]===0xFE)
+    return { enc:'UTF-16 LE', text: new TextDecoder('utf-16le').decode(bytes.slice(2)) };
+  if (bytes[0]===0xFE && bytes[1]===0xFF)
+    return { enc:'UTF-16 BE', text: new TextDecoder('utf-16be').decode(bytes.slice(2)) };
+  try { return { enc:'UTF-8', text: new TextDecoder('utf-8',{fatal:true}).decode(bytes) }; } catch(e) {}
+  try { return { enc:'EUC-KR/CP949', text: new TextDecoder('euc-kr').decode(bytes) }; } catch(e) {}
+  return { enc:'Latin-1', text: new TextDecoder('latin-1').decode(bytes) };
+}
+
+function fixLineEnding(text, mode) {
+  const lf = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  return mode==='CRLF' ? lf.replace(/\n/g,'\r\n') : lf;
+}
+
+function targetLabel(v) {
+  return {'euc-kr':'CP949','utf-8-bom':'UTF8BOM','utf-8':'UTF8'}[v]||v;
+}
+
+function log(id, msg, type) {
+  const box = document.getElementById(id);
+  box.classList.add('visible');
+  const d = document.createElement('div');
+  d.className = 'log-line' + (type ? ' log-'+type : '');
+  d.textContent = msg; box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setProgress(fillId, pctId, labelId, done, total, name) {
+  const pct = total ? Math.round(done/total*100) : 0;
+  document.getElementById(fillId).style.width = pct+'%';
+  document.getElementById(pctId).textContent = pct+'%';
+  document.getElementById(labelId).textContent = name
+    ? `처리 중: ${name} (${done}/${total})`
+    : `완료 (${done}/${total})`;
+}
+
+function directDownload(bytes, filename) {
+  const blob = new Blob([bytes], { type:'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 600);
+}
+
+/* ════════════════════════════════════════════════
+   탭 전환
+════════════════════════════════════════════════ */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* ════════════════════════════════════════════════
+   탭 1 — 모드 토글
+════════════════════════════════════════════════ */
+let currentMode = 'folder'; // 'folder' | 'file'
+let encFiles = []; // 파일 모드 업로드 목록
+
+document.getElementById('modeFolder').addEventListener('click', () => switchMode('folder'));
+document.getElementById('modeFile').addEventListener('click',   () => switchMode('file'));
+
+function switchMode(mode) {
+  currentMode = mode;
+  document.getElementById('modeFolder').classList.toggle('active', mode==='folder');
+  document.getElementById('modeFile').classList.toggle('active',   mode==='file');
+  document.getElementById('uiFolder').style.display = mode==='folder' ? '' : 'none';
+  document.getElementById('uiFile').style.display   = mode==='file'   ? '' : 'none';
+  updateConvertBtn();
+}
+
+/* ════════════════════════════════════════════════
+   탭 1 — 폴더 모드
+════════════════════════════════════════════════ */
+let srcHandle = null, dstHandle = null;
+const srcBtn = document.getElementById('srcBtn');
+const dstBtn = document.getElementById('dstBtn');
+
+srcBtn.addEventListener('click', async () => {
+  try {
+    srcHandle = await window.showDirectoryPicker({ mode:'read' });
+    document.getElementById('srcPath').textContent = srcHandle.name;
+    document.getElementById('srcPath').classList.remove('empty');
+    log('encLog', `입력 폴더: ${srcHandle.name}`, 'info');
+    updateConvertBtn();
+  } catch(e) { if (e.name!=='AbortError') log('encLog', e.message, 'err'); }
+});
+
+dstBtn.addEventListener('click', async () => {
+  try {
+    dstHandle = await window.showDirectoryPicker({ mode:'readwrite' });
+    document.getElementById('dstPath').textContent = dstHandle.name;
+    document.getElementById('dstPath').classList.remove('empty');
+    log('encLog', `출력 폴더: ${dstHandle.name}`, 'info');
+    updateConvertBtn();
+  } catch(e) { if (e.name!=='AbortError') log('encLog', e.message, 'err'); }
+});
+
+async function* walkCSV(dir, rel) {
+  for await (const [name, handle] of dir.entries()) {
+    const p = rel ? `${rel}/${name}` : name;
+    if (handle.kind === 'directory') yield* walkCSV(handle, p);
+    else if (handle.kind === 'file' && name.toLowerCase().endsWith('.csv')) yield { handle, relPath: p };
+  }
+}
+
+async function ensureDir(root, parts) {
+  let d = root;
+  for (const p of parts) d = await d.getDirectoryHandle(p, { create:true });
+  return d;
+}
+
+async function writeToFolder(root, relPath, bytes) {
+  const parts = relPath.split('/'); const name = parts.pop();
+  const dir = await ensureDir(root, parts);
+  const fh = await dir.getFileHandle(name, { create:true });
+  const w = await fh.createWritable();
+  await w.write(bytes); await w.close();
+}
+
+/* ════════════════════════════════════════════════
+   탭 1 — 파일 모드
+════════════════════════════════════════════════ */
+const encDropZone  = document.getElementById('encDropZone');
+const encFileInput = document.getElementById('encFileInput');
+const encFileList  = document.getElementById('encFileList');
+
+encDropZone.addEventListener('click', () => { if (!encDropZone.classList.contains('disabled')) encFileInput.click(); });
+encDropZone.addEventListener('dragover', e => { if (!encDropZone.classList.contains('disabled')) { e.preventDefault(); encDropZone.classList.add('drag-over'); } });
+encDropZone.addEventListener('dragleave', () => encDropZone.classList.remove('drag-over'));
+encDropZone.addEventListener('drop', e => {
+  if (encDropZone.classList.contains('disabled')) return;
+  e.preventDefault(); encDropZone.classList.remove('drag-over');
+  addEncFiles([...e.dataTransfer.files]);
+});
+encFileInput.addEventListener('change', () => { addEncFiles([...encFileInput.files]); encFileInput.value=''; });
+
+function addEncFiles(newFiles) {
+  newFiles.filter(f => f.name.toLowerCase().endsWith('.csv')).forEach(f => {
+    if (!encFiles.find(x => x.file.name===f.name && x.file.size===f.size))
+      encFiles.push({ file:f, status:'ready', detectedEnc:null });
+  });
+  renderEncFileList(); updateConvertBtn();
+}
+
+function renderEncFileList() {
+  encFileList.innerHTML = '';
+  const statusMap = { ready:['s-ready','대기'], processing:['s-processing','처리 중'], done:['s-done','완료'], error:['s-error','오류'] };
+  encFiles.forEach((item, i) => {
+    const [cls, label] = statusMap[item.status]||['s-ready','대기'];
+    const enc = item.detectedEnc ? ` · ${item.detectedEnc}` : '';
+    const d = document.createElement('div'); d.className = 'file-item';
+    d.innerHTML = `
+      <div class="file-icon">CSV</div>
+      <div class="file-info">
+        <div class="file-name">${esc(item.file.name)}</div>
+        <div class="file-meta">${(item.file.size/1024).toFixed(1)} KB${enc}</div>
+      </div>
+      <span class="file-status ${cls}">${label}</span>
+      <button class="btn-remove" data-i="${i}">&#215;</button>`;
+    encFileList.appendChild(d);
+  });
+  encFileList.querySelectorAll('.btn-remove').forEach(btn => {
+    btn.addEventListener('click', () => { encFiles.splice(+btn.dataset.i, 1); renderEncFileList(); updateConvertBtn(); });
+  });
+}
+
+/* ════════════════════════════════════════════════
+   탭 1 — 변환 버튼 활성화 조건
+════════════════════════════════════════════════ */
+function updateConvertBtn() {
+  const convertBtn = document.getElementById('convertBtn');
+  if (!cp949Table) { convertBtn.disabled = true; return; }
+  if (currentMode === 'folder') convertBtn.disabled = !(srcHandle && dstHandle);
+  else convertBtn.disabled = encFiles.length === 0;
+}
+
+/* ════════════════════════════════════════════════
+   탭 1 — 변환 실행
+════════════════════════════════════════════════ */
+document.getElementById('convertBtn').addEventListener('click', async () => {
+  const convertBtn = document.getElementById('convertBtn');
+  convertBtn.disabled = true;
+  srcBtn.disabled = true; dstBtn.disabled = true;
+  document.getElementById('encLog').innerHTML = '';
+  document.getElementById('encSummary').classList.remove('visible');
+  document.getElementById('encProgress').classList.add('visible');
+
+  const target   = document.getElementById('targetEnc').value;
+  const lineMode = document.getElementById('lineEnd').value;
+  const tLabel   = targetLabel(target);
+
+  if (currentMode === 'folder') {
+    await runFolderConvert(target, lineMode, tLabel);
+  } else {
+    await runFileConvert(target, lineMode, tLabel);
+  }
+
+  srcBtn.disabled = !cp949Table; dstBtn.disabled = !cp949Table;
+  updateConvertBtn();
+});
+
+async function runFolderConvert(target, lineMode, tLabel) {
+  log('encLog', `폴더 변환 시작 (${tLabel})`, 'info');
+  const allFiles = [];
+  try { for await (const f of walkCSV(srcHandle,'')) allFiles.push(f); }
+  catch(e) { log('encLog','폴더 읽기 오류: '+e.message,'err'); return; }
+  if (!allFiles.length) { log('encLog','CSV 파일이 없습니다.','warn'); return; }
+
+  let ok=0, err=0;
+  for (let i=0; i<allFiles.length; i++) {
+    const { handle, relPath } = allFiles[i];
+    setProgress('encFill','encPct','encLabel', i, allFiles.length, relPath);
+    try {
+      const bytes = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      const { enc, text:raw } = detectAndDecode(bytes);
+      const outBytes = encodeToTarget(fixLineEnding(raw, lineMode), target);
+      await writeToFolder(dstHandle, relPath.replace(/\.csv$/i,`_${tLabel}.csv`), outBytes);
+      ok++; log('encLog',`✓ ${relPath}  [${enc} → ${tLabel}]`,'ok');
+    } catch(e) { err++; log('encLog',`✗ ${relPath}: ${e.message}`,'err'); }
+    await new Promise(r=>setTimeout(r,0));
+  }
+  setProgress('encFill','encPct','encLabel', allFiles.length, allFiles.length, null);
+  log('encLog',`완료 — 성공 ${ok}개 / 실패 ${err}개`,'info');
+  document.getElementById('encTotal').textContent = allFiles.length;
+  document.getElementById('encOk').textContent = ok;
+  document.getElementById('encErr').textContent = err;
+  document.getElementById('encSummary').classList.add('visible');
+}
+
+async function runFileConvert(target, lineMode, tLabel) {
+  log('encLog',`파일 변환 시작 (${tLabel}) — 변환 후 자동 다운로드`,'info');
+  let ok=0, err=0;
+  for (let i=0; i<encFiles.length; i++) {
+    const item = encFiles[i];
+    item.status = 'processing'; renderEncFileList();
+    setProgress('encFill','encPct','encLabel', i, encFiles.length, item.file.name);
+    try {
+      const bytes = new Uint8Array(await item.file.arrayBuffer());
+      const { enc, text:raw } = detectAndDecode(bytes);
+      item.detectedEnc = enc;
+      const outBytes = encodeToTarget(fixLineEnding(raw, lineMode), target);
+      directDownload(outBytes, item.file.name.replace(/\.csv$/i,`_${tLabel}.csv`));
+      item.status = 'done'; ok++;
+      log('encLog',`✓ ${item.file.name}  [${enc} → ${tLabel}]`,'ok');
+    } catch(e) {
+      item.status = 'error'; err++;
+      log('encLog',`✗ ${item.file.name}: ${e.message}`,'err');
+    }
+    renderEncFileList();
+    await new Promise(r=>setTimeout(r,120));
+  }
+  setProgress('encFill','encPct','encLabel', encFiles.length, encFiles.length, null);
+  log('encLog',`완료 — 성공 ${ok}개 / 실패 ${err}개`,'info');
+  document.getElementById('encTotal').textContent = encFiles.length;
+  document.getElementById('encOk').textContent = ok;
+  document.getElementById('encErr').textContent = err;
+  document.getElementById('encSummary').classList.add('visible');
+}
+
+/* ════════════════════════════════════════════════
+   탭 2 — 소재 파일 가공
+════════════════════════════════════════════════ */
+const splitDrop    = document.getElementById('splitDrop');
+const splitFileInp = document.getElementById('splitFile');
+const splitBtn     = document.getElementById('splitBtn');
+let splitFileObj   = null;
+
+function setSplitFile(file) {
+  if (!file) return;
+  splitFileObj = file;
+  const nm = document.getElementById('splitFileName');
+  nm.textContent = file.name; nm.style.display = '';
+  splitDrop.style.borderColor = '#1d9e75'; splitDrop.style.borderStyle = 'solid';
+  splitBtn.disabled = false;
+}
+
+splitDrop.addEventListener('click', () => splitFileInp.click());
+splitDrop.addEventListener('dragover', e => { e.preventDefault(); splitDrop.classList.add('drag-over'); });
+splitDrop.addEventListener('dragleave', () => splitDrop.classList.remove('drag-over'));
+splitDrop.addEventListener('drop', e => {
+  e.preventDefault(); splitDrop.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && (f.name.endsWith('.xlsx')||f.name.endsWith('.csv'))) setSplitFile(f);
+  else log('splitLog','xlsx 또는 csv 파일만 지원합니다.','warn');
+});
+splitFileInp.addEventListener('change', () => { if (splitFileInp.files[0]) setSplitFile(splitFileInp.files[0]); });
+
+function parseSojae(text) {
+  if (!text || !text.trim()) return null;
+  const parts = text.split(',');
+
+  // URL 기반 파싱 (URL이 있는 경우)
+  const urlIdx = parts.findIndex(p => p.trim().startsWith('http'));
+  let 상품명, 가격, 카테고리, url, 가격비교ID, 상품코드, codeFromUrl = false;
+
+  if (urlIdx >= 2) {
+    url       = parts[urlIdx];
+    가격비교ID  = (parts[urlIdx+1]||'').trim();
+    상품코드    = (parts[urlIdx+2]||'').trim();
+    카테고리    = parts[urlIdx-1]||'';
+    가격       = (parts[urlIdx-2]||'').trim();
+    상품명      = parts.slice(0, urlIdx-2).join(',');
+  } else {
+    // URL 없음 → 끝에서 5개 필드를 위치 기반으로 파싱
+    // 형식: 상품명,가격,카테고리,상품링크,가격비교ID,상품코드
+    if (parts.length < 2) return null;
+    상품코드    = (parts[parts.length-1]||'').trim();
+    가격비교ID  = (parts[parts.length-2]||'').trim();
+    url        = (parts[parts.length-3]||'').trim();
+    카테고리    = (parts[parts.length-4]||'').trim();
+    가격       = (parts[parts.length-5]||'').trim();
+    상품명      = parts.slice(0, parts.length-5).join(',');
+  }
+
+  if (!상품코드 && url) {
+    const m = url.match(/display\/goods\/(\d+)/);
+    if (m) { 상품코드 = m[1]; codeFromUrl = true; }
+  }
+  return { 상품명, 가격, 카테고리, url, 가격비교ID, 상품코드, codeFromUrl };
+}
+
+function csvEscape(v) {
+  const s = v==null ? '' : String(v);
+  return (s.includes(',')||s.includes('"')||s.includes('\n')) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function rowToLine(arr) { return arr.map(csvEscape).join(','); }
+
+async function readFileRows(file) {
+  const buf = await file.arrayBuffer();
+  const name = file.name.toLowerCase();
+  if (name.endsWith('.xlsx')||name.endsWith('.xls')) {
+    const wb = XLSX.read(buf,{type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return { rows: XLSX.utils.sheet_to_json(ws,{header:1,defval:''}), detectedEnc:'utf-8-bom' };
+  }
+  const bytes = new Uint8Array(buf);
+  const { enc, text } = detectAndDecode(bytes);
+  const outEnc = enc.includes('EUC')||enc.includes('CP949') ? 'euc-kr'
+               : enc==='UTF-8 BOM' ? 'utf-8-bom' : 'utf-8';
+  return { rows: text.split('\n').map(l=>l.replace(/\r$/,'').split(',')), detectedEnc: outEnc };
+}
+
+splitBtn.addEventListener('click', async () => {
+  splitBtn.disabled = true;
+  document.getElementById('splitLog').innerHTML = '';
+  document.getElementById('splitSummary').classList.remove('visible');
+  try {
+    const { rows: rawRows, detectedEnc: outEnc } = await readFileRows(splitFileObj);
+    if (!rawRows.length) throw new Error('파일이 비어 있습니다.');
+    const headerRow = rawRows[0];
+    const sojaeIdx = headerRow.findIndex(h => String(h).trim()==='소재');
+    if (sojaeIdx===-1) throw new Error('"소재" 열을 찾지 못했습니다.');
+    const otherHeaders = headerRow.filter((_,i)=>i!==sojaeIdx);
+    const outRows = [['상품명','가격','카테고리','상품링크','가격비교ID','상품코드',...otherHeaders]];
+    let total=0, ok=0, auto=0;
+    for (let i=2; i<rawRows.length; i++) {
+      const row = rawRows[i];
+      if (!row||row.every(c=>String(c).trim()==='')) continue;
+      total++;
+      const parsed = parseSojae(String(row[sojaeIdx]||'').trim());
+      if (!parsed) {
+        // 파싱 완전 실패 시 소재 원본 텍스트를 상품명에 두고 나머지 빈칸으로 처리
+        log('splitLog',`행 ${i+1}: 파싱 실패 — 원본 유지`,'warn');
+        outRows.push([String(row[sojaeIdx]||''),'','','','','',
+          ...row.filter((_,ci)=>ci!==sojaeIdx)]);
+        ok++;
+        continue;
+      }
+      outRows.push([parsed.상품명,parsed.가격,parsed.카테고리,parsed.url,parsed.가격비교ID,parsed.상품코드,
+        ...row.filter((_,ci)=>ci!==sojaeIdx)]);
+      if (parsed.codeFromUrl) auto++;
+      ok++;
+    }
+    if (!ok) throw new Error('처리된 행이 없습니다.');
+    const csv = outRows.map(rowToLine).join('\n');
+    directDownload(encodeToTarget(csv, outEnc), splitFileObj.name.replace(/\.[^.]+$/,'')+'_분리.csv');
+    log('splitLog',`완료 — ${total}행 중 ${ok}행 처리, 상품코드 자동추출 ${auto}건`,'ok');
+    document.getElementById('splitTotal').textContent  = total;
+    document.getElementById('splitOk').textContent     = ok;
+    document.getElementById('splitFilled').textContent = auto;
+    document.getElementById('splitSummary').classList.add('visible');
+  } catch(e) { log('splitLog','오류: '+e.message,'err'); }
+  splitBtn.disabled = false;
+});
+
+/* ════════════════════════════════════════════════
+   공통 유틸
+════════════════════════════════════════════════ */
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ════════════════════════════════════════════════
+   초기화: CP949 테이블
+════════════════════════════════════════════════ */
+(async () => {
+  try {
+    cp949Table = await buildCP949Table();
+    document.getElementById('initBar').classList.add('hidden');
+    srcBtn.disabled = false; dstBtn.disabled = false;
+    document.getElementById('encDropZone').classList.remove('disabled');
+    log('encLog','준비 완료.','info');
+    document.getElementById('encLog').classList.add('visible');
+  } catch(e) {
+    document.getElementById('initMsg').textContent = '초기화 실패: '+e.message;
+  }
+})();
+</script>
+</body>
+</html>
