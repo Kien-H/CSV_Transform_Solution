@@ -178,11 +178,12 @@ select {
 <body>
 <div class="container">
   <h1>CSV 변환 도구</h1>
-  <p class="subtitle">인코딩 일괄 변환 · 소재 파일 가공</p>
+  <p class="subtitle">인코딩 일괄 변환 · 소재 파일 가공 · GA4 파일 가공</p>
 
   <div class="tabs">
     <button class="tab-btn active" data-tab="enc">인코딩 변환</button>
     <button class="tab-btn"        data-tab="split">소재 파일 가공</button>
+    <button class="tab-btn"        data-tab="ga4">GA4 파일 가공</button>
   </div>
 
   <!-- ══════════════════════════ 탭 1: 인코딩 변환 ══════════════════════════ -->
@@ -280,6 +281,32 @@ select {
 
     <div class="log-box" id="splitLog"></div>
   </div>
+  <!-- ══════════════════════════ 탭 3: GA4 파일 가공 ══════════════════════════ -->
+  <div class="tab-panel" id="tab-ga4">
+
+    <div class="drop-zone" id="ga4Drop">
+      <input type="file" id="ga4File" accept=".csv">
+      <div class="drop-icon">📈</div>
+      <p>GA4 CSV 파일을 끌어다 놓거나 클릭해서 선택</p>
+      <span>GA4에서 내보낸 .csv 파일 지원</span>
+      <div id="ga4FileName" style="display:none; margin-top:8px; font-size:14px; font-weight:500; color:#0f6e56;"></div>
+    </div>
+
+    <!-- 미리보기 카드 -->
+    <div class="card" id="ga4Preview" style="display:none; margin-bottom:1rem;">
+      <div class="card-title">변환 미리보기</div>
+      <div style="display:flex; flex-direction:column; gap:6px; font-size:13px;">
+        <div style="display:flex; gap:8px;"><span style="color:#888780; width:80px; flex-shrink:0;">시트명</span><span id="ga4SheetName" style="font-weight:500; color:#1a1a18;"></span></div>
+        <div style="display:flex; gap:8px;"><span style="color:#888780; width:80px; flex-shrink:0;">파일명</span><span id="ga4OutName" style="font-weight:500; color:#1a1a18;"></span></div>
+        <div style="display:flex; gap:8px;"><span style="color:#888780; width:80px; flex-shrink:0;">데이터</span><span id="ga4RowCount" style="color:#1a1a18;"></span></div>
+      </div>
+    </div>
+
+    <button class="btn-run" id="ga4Btn" disabled>Excel 파일로 변환 및 다운로드</button>
+
+    <div class="log-box" id="ga4Log"></div>
+  </div>
+
 </div>
 
 <script>
@@ -730,6 +757,107 @@ splitBtn.addEventListener('click', async () => {
    공통 유틸
 ════════════════════════════════════════════════ */
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ════════════════════════════════════════════════
+   탭 3 — GA4 파일 가공
+════════════════════════════════════════════════ */
+const ga4Drop     = document.getElementById('ga4Drop');
+const ga4FileInp  = document.getElementById('ga4File');
+const ga4Btn      = document.getElementById('ga4Btn');
+let ga4FileObj    = null;
+let ga4Meta       = null; // { sheetName, outName, headerRow, dataRows }
+
+function parseGA4CSV(text) {
+  // 줄 분리 (CRLF/LF 모두 대응)
+  const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+
+  // # 접두사 제거 후 값 추출
+  const stripHash = s => s.replace(/^#\s*/, '').trim();
+  const row2 = stripHash(lines[1] || ''); // 00. SK Stoa GA4
+  const row3 = stripHash(lines[2] || ''); // (ADEF)SA 내부 검색어-자유 형식 1
+  const row4 = stripHash(lines[3] || ''); // 20260417-20260423
+
+  // 시트명 = 3행 내용
+  const sheetName = row3 || 'Sheet1';
+  // 파일명 = 2행 + 공백 + 3행 + "_" + 4행
+  const outName   = `${row2} ${row3}_${row4}.xlsx`;
+
+  // 8행(index 7): 실제 헤더, 9행(index 8): 총계 → 삭제, 10행~: 데이터
+  const headerLine = lines[7] || '';
+  const dataLines  = lines.slice(9).filter(l => l.trim() !== '');
+
+  // CSV 행을 배열로 파싱 (따옴표 포함 처리)
+  function parseCSVLine(line) {
+    const result = []; let cur = ''; let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') {
+        if (inQ && line[i+1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+      else cur += c;
+    }
+    result.push(cur);
+    return result;
+  }
+
+  const headerRow = parseCSVLine(headerLine);
+  const dataRows  = dataLines.map(parseCSVLine);
+
+  return { sheetName, outName, headerRow, dataRows,
+           row2, row3, row4, totalRows: dataRows.length };
+}
+
+function setGA4File(file) {
+  if (!file) return;
+  ga4FileObj = file;
+  const nm = document.getElementById('ga4FileName');
+  nm.textContent = file.name; nm.style.display = '';
+  ga4Drop.style.borderColor = '#1d9e75'; ga4Drop.style.borderStyle = 'solid';
+
+  // 미리보기: 파일 읽어서 메타 추출
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const bytes = new Uint8Array(e.target.result);
+      const { text } = detectAndDecode(bytes);
+      ga4Meta = parseGA4CSV(text);
+      document.getElementById('ga4SheetName').textContent = ga4Meta.sheetName;
+      document.getElementById('ga4OutName').textContent   = ga4Meta.outName;
+      document.getElementById('ga4RowCount').textContent  = `헤더 1행 + 데이터 ${ga4Meta.totalRows}행`;
+      document.getElementById('ga4Preview').style.display = '';
+      ga4Btn.disabled = false;
+    } catch(err) {
+      log('ga4Log', '파일 읽기 오류: ' + err.message, 'err');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+ga4Drop.addEventListener('click', () => ga4FileInp.click());
+ga4Drop.addEventListener('dragover', e => { e.preventDefault(); ga4Drop.classList.add('drag-over'); });
+ga4Drop.addEventListener('dragleave', () => ga4Drop.classList.remove('drag-over'));
+ga4Drop.addEventListener('drop', e => {
+  e.preventDefault(); ga4Drop.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.toLowerCase().endsWith('.csv')) setGA4File(f);
+  else log('ga4Log', 'csv 파일만 지원합니다.', 'warn');
+});
+ga4FileInp.addEventListener('change', () => { if (ga4FileInp.files[0]) setGA4File(ga4FileInp.files[0]); ga4FileInp.value=''; });
+
+ga4Btn.addEventListener('click', () => {
+  if (!ga4Meta) return;
+  try {
+    const wb = XLSX.utils.book_new();
+    const wsData = [ga4Meta.headerRow, ...ga4Meta.dataRows];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    XLSX.utils.book_append_sheet(wb, ws, ga4Meta.sheetName);
+    XLSX.writeFile(wb, ga4Meta.outName);
+    log('ga4Log', `✓ 완료: ${ga4Meta.outName}  (데이터 ${ga4Meta.totalRows}행)`, 'ok');
+  } catch(err) {
+    log('ga4Log', '오류: ' + err.message, 'err');
+  }
+});
 
 /* ════════════════════════════════════════════════
    초기화: CP949 테이블
