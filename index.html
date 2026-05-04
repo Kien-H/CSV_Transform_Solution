@@ -1114,6 +1114,406 @@ async function readFileAsRows(file) {
   });
 })();
 
+/* ════════════════════════════════════════════
+   인코딩 변환 - 폴더 모드
+════════════════════════════════════════════ */
+(function() {
+  let srcDirHandle = null, dstDirHandle = null;
+  const srcBtn = document.getElementById('srcBtn');
+  const dstBtn = document.getElementById('dstBtn');
+  const srcPath = document.getElementById('srcPath');
+  const dstPath = document.getElementById('dstPath');
+  const convertBtn = document.getElementById('convertBtn');
+
+  if (!srcBtn) return;
+
+  srcBtn.addEventListener('click', async () => {
+    try {
+      srcDirHandle = await window.showDirectoryPicker({ mode: 'read' });
+      srcPath.value = srcDirHandle.name;
+      checkReady();
+    } catch(e) { if (e.name !== 'AbortError') alert('폴더 선택 오류: ' + e.message); }
+  });
+
+  dstBtn.addEventListener('click', async () => {
+    try {
+      dstDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      dstPath.value = dstDirHandle.name;
+      checkReady();
+    } catch(e) { if (e.name !== 'AbortError') alert('폴더 선택 오류: ' + e.message); }
+  });
+
+  function checkReady() {
+    convertBtn.disabled = !(srcDirHandle && dstDirHandle);
+  }
+
+  async function collectCSV(dirHandle, prefix) {
+    const files = [];
+    for await (const [name, handle] of dirHandle.entries()) {
+      if (handle.kind === 'file' && name.toLowerCase().endsWith('.csv')) {
+        files.push({ handle, path: prefix + name });
+      } else if (handle.kind === 'directory') {
+        const sub = await collectCSV(handle, prefix + name + '/');
+        files.push(...sub);
+      }
+    }
+    return files;
+  }
+
+  async function getOrCreateDir(rootHandle, parts) {
+    let cur = rootHandle;
+    for (const p of parts) {
+      cur = await cur.getDirectoryHandle(p, { create: true });
+    }
+    return cur;
+  }
+
+  convertBtn.addEventListener('click', async () => {
+    convertBtn.disabled = true;
+    document.getElementById('encLog').innerHTML = '';
+    document.getElementById('encSummary').classList.remove('visible');
+    document.getElementById('encProgress').classList.remove('visible');
+
+    const targetEnc = document.getElementById('targetEnc').value;
+    const lineEnd   = document.getElementById('lineEnd').value;
+    const outEnc = targetEnc.includes('EUC') || targetEnc.includes('CP949') ? 'euc-kr'
+                 : targetEnc === 'UTF-8 BOM' ? 'utf-8-bom' : 'utf-8';
+
+    try {
+      const files = await collectCSV(srcDirHandle, '');
+      if (!files.length) { log('encLog','원본 폴더에 CSV가 없습니다.','warn'); convertBtn.disabled=false; return; }
+
+      document.getElementById('encProgress').classList.add('visible');
+      let ok = 0, err = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const { handle, path } = files[i];
+        setProgress('encFill','encPct','encLabel', i, files.length, path);
+        try {
+          const file = await handle.getFile();
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const { text } = detectAndDecode(bytes);
+          const fixed = fixLineEnding(text, lineEnd);
+          const outBytes = encodeToTarget(fixed, outEnc);
+
+          const parts = path.split('/');
+          const fname = parts.pop();
+          const dirParts = parts.length ? parts : [];
+          const outDir = dirParts.length ? await getOrCreateDir(dstDirHandle, dirParts) : dstDirHandle;
+          const outHandle = await outDir.getFileHandle(fname, { create: true });
+          const w = await outHandle.createWritable();
+          await w.write(outBytes); await w.close();
+          log('encLog', `✓ ${path}`, 'ok'); ok++;
+        } catch(e) {
+          log('encLog', `✗ ${path}: ${e.message}`, 'err'); err++;
+        }
+      }
+      setProgress('encFill','encPct','encLabel', files.length, files.length, '');
+      document.getElementById('encTotal').textContent = files.length;
+      document.getElementById('encOk').textContent   = ok;
+      document.getElementById('encErr').textContent  = err;
+      document.getElementById('encSummary').classList.add('visible');
+      log('encLog', `완료: 총 ${files.length}개 (성공 ${ok}, 실패 ${err})`, 'info');
+    } catch(e) {
+      log('encLog', '오류: ' + e.message, 'err');
+    }
+    convertBtn.disabled = false;
+  });
+})();
+
+/* ════════════════════════════════════════════
+   인코딩 변환 - 파일 모드
+════════════════════════════════════════════ */
+(function() {
+  const drop  = document.getElementById('encDropZone');
+  const inp   = document.getElementById('encFileInput');
+  const list  = document.getElementById('encFileList');
+  if (!drop) return;
+
+  let files = [];
+
+  function render() {
+    list.innerHTML = '';
+    files.forEach((f, i) => {
+      const d = document.createElement('div'); d.className = 'file-item';
+      d.innerHTML = `<div class="file-icon csv">CSV</div>
+        <div class="file-info">
+          <div class="file-name">${esc(f.name)}</div>
+          <div class="file-meta">${(f.size/1024).toFixed(1)} KB</div>
+        </div>
+        <button class="btn-remove" data-i="${i}">&#215;</button>`;
+      list.appendChild(d);
+    });
+    list.querySelectorAll('.btn-remove').forEach(b => {
+      b.addEventListener('click', () => { files.splice(+b.dataset.i, 1); render(); });
+    });
+  }
+
+  drop.addEventListener('click', () => { if (!drop.classList.contains('disabled')) inp.click(); });
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('drag-over');
+    const newFiles = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.csv'));
+    newFiles.forEach(f => { if (!files.find(x=>x.name===f.name&&x.size===f.size)) files.push(f); });
+    render();
+  });
+  inp.addEventListener('change', () => {
+    const newFiles = [...inp.files].filter(f => f.name.toLowerCase().endsWith('.csv'));
+    newFiles.forEach(f => { if (!files.find(x=>x.name===f.name&&x.size===f.size)) files.push(f); });
+    render(); inp.value='';
+  });
+
+  // 파일 모드는 convertBtn 공유 안 하므로 별도 처리
+  // convertBtn 클릭 시 현재 모드 확인
+  const convertBtn = document.getElementById('convertBtn');
+  const origClick = convertBtn.onclick;
+
+  document.getElementById('modeFile').addEventListener('click', () => {
+    convertBtn.onclick = async () => {
+      if (!files.length) { alert('파일을 선택하세요.'); return; }
+      convertBtn.disabled = true;
+      const targetEnc = document.getElementById('targetEnc').value;
+      const lineEnd   = document.getElementById('lineEnd').value;
+      const outEnc = targetEnc.includes('EUC') || targetEnc.includes('CP949') ? 'euc-kr'
+                   : targetEnc === 'UTF-8 BOM' ? 'utf-8-bom' : 'utf-8';
+
+      document.getElementById('encLog').innerHTML = '';
+      let ok=0, err=0;
+      for (const file of files) {
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const { text } = detectAndDecode(bytes);
+          const fixed = fixLineEnding(text, lineEnd);
+          const outBytes = encodeToTarget(fixed, outEnc);
+          directDownload(outBytes, file.name);
+          log('encLog', `✓ ${file.name}`, 'ok'); ok++;
+        } catch(e) {
+          log('encLog', `✗ ${file.name}: ${e.message}`, 'err'); err++;
+        }
+      }
+      document.getElementById('encTotal').textContent = files.length;
+      document.getElementById('encOk').textContent   = ok;
+      document.getElementById('encErr').textContent  = err;
+      document.getElementById('encSummary').classList.add('visible');
+      log('encLog', `완료: 총 ${files.length}개 (성공 ${ok}, 실패 ${err})`, 'info');
+      convertBtn.disabled = false;
+    };
+  });
+})();
+
+/* ════════════════════════════════════════════
+   소재 파일 가공
+════════════════════════════════════════════ */
+(function() {
+  const drop     = document.getElementById('splitDrop');
+  const inp      = document.getElementById('splitFile');
+  const nameEl   = document.getElementById('splitFileName');
+  const btn      = document.getElementById('splitBtn');
+  if (!drop) return;
+
+  let currentFile = null;
+
+  function setFile(f) {
+    currentFile = f;
+    nameEl.style.display = '';
+    nameEl.textContent = f.name;
+    btn.disabled = false;
+  }
+
+  drop.addEventListener('click', () => inp.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+  });
+  inp.addEventListener('change', () => { if (inp.files[0]) { setFile(inp.files[0]); inp.value=''; } });
+
+  btn.addEventListener('click', async () => {
+    if (!currentFile) return;
+    btn.disabled = true;
+    document.getElementById('splitLog').innerHTML = '';
+    document.getElementById('splitSummary').classList.remove('visible');
+
+    try {
+      const { rows, enc } = await readFileAsRows(currentFile);
+      if (!rows.length) throw new Error('데이터가 없습니다.');
+
+      // 1행 "소재 N개 결과" 제거
+      const startRow = (String(rows[0]?.[0]||'').includes('소재') && String(rows[0]?.[0]||'').includes('개')) ? 1 : 0;
+      const header = rows[startRow];
+      const dataRows = rows.slice(startRow + 1).filter(r => r.some(c => c !== '' && c != null));
+
+      // 출력 헤더
+      const outHeader = ['상품명','가격','카테고리','상품링크','가격비교ID','상품코드'];
+
+      const outRows = [outHeader];
+      let ok=0, fill=0, err=0;
+
+      for (const row of dataRows) {
+        const sojai = String(row[0] || '');
+        if (!sojai.trim()) { err++; outRows.push(['','','','','','']); continue; }
+
+        // URL 포함 여부로 파싱 방식 결정
+        const urlMatch = sojai.match(/https?:\/\/[^\s]+/);
+        let name='', price='', cat='', link='', compareId='', prodCode='';
+
+        if (urlMatch) {
+          const url = urlMatch[0];
+          const before = sojai.substring(0, sojai.indexOf(url)).trim();
+          const after  = sojai.substring(sojai.indexOf(url) + url.length).trim();
+          const parts  = before.split(/\s+/);
+
+          // grp- / nad- 패턴 기반 컬럼 추출
+          const grpIdx = parts.findIndex(p => p.startsWith('grp-'));
+          const nadIdx = parts.findIndex(p => p.startsWith('nad-'));
+
+          if (grpIdx >= 0 && nadIdx > grpIdx) {
+            name = parts.slice(0, grpIdx).join(' ');
+            price = parts[grpIdx + 1] || '';
+          } else {
+            // 끝에서 역방향
+            name  = parts.slice(0, -2).join(' ');
+            price = parts[parts.length - 1] || '';
+          }
+
+          cat = after.split(/\s+/).slice(0, 3).join('>') || '';
+          link = url;
+          const codeMatch = url.match(/goods\/(\d+)/);
+          prodCode = codeMatch ? codeMatch[1] : '';
+          compareId = '';
+          ok++;
+        } else {
+          // URL 없으면 위치 기반: 끝에서 5개 필드
+          const parts = sojai.split(/\s+/);
+          const n = parts.length;
+          if (n >= 5) {
+            name      = parts.slice(0, n-5).join(' ');
+            price     = parts[n-5];
+            cat       = parts[n-4];
+            link      = parts[n-3];
+            compareId = parts[n-2];
+            prodCode  = parts[n-1];
+            fill++;
+          } else {
+            name = sojai; err++;
+          }
+        }
+
+        if (!prodCode) {
+          const m = link.match(/goods\/(\d+)/);
+          if (m) prodCode = m[1];
+        }
+
+        outRows.push([name, price, cat, link, compareId, prodCode]);
+      }
+
+      // 출력
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(outRows), 'Sheet1');
+      const outName = currentFile.name.replace(/\.[^/.]+$/, '') + '_가공.xlsx';
+      XLSX.writeFile(wb, outName);
+
+      document.getElementById('splitTotal').textContent  = dataRows.length;
+      document.getElementById('splitOk').textContent     = ok;
+      document.getElementById('splitFilled').textContent = fill;
+      document.getElementById('splitSummary').classList.add('visible');
+      log('splitLog', `완료: ${outName} (${dataRows.length}행 처리)`, 'info');
+
+    } catch(e) {
+      log('splitLog', '오류: ' + e.message, 'err');
+    }
+    btn.disabled = false;
+  });
+})();
+
+/* ════════════════════════════════════════════
+   GA4 파일 가공
+════════════════════════════════════════════ */
+(function() {
+  const drop    = document.getElementById('ga4Drop');
+  const inp     = document.getElementById('ga4File');
+  const nameEl  = document.getElementById('ga4FileName');
+  const preview = document.getElementById('ga4Preview');
+  const sheetEl = document.getElementById('ga4SheetName');
+  const outEl   = document.getElementById('ga4OutName');
+  const rowEl   = document.getElementById('ga4RowCount');
+  const btn     = document.getElementById('ga4Btn');
+  if (!drop) return;
+
+  let currentFile = null;
+  let parsedData  = null;
+
+  function parseGA4(text) {
+    const lines = text.split(/\r?\n/);
+    // GA4 구조: 0=구분선, 1=리포트명, 2=세부명, 3=날짜, 4=구분선, 5=빈줄, 6=세그헤더, 7=컬럼헤더, 8=총계, 9~=데이터
+    const reportName = lines[1] || '';
+    const subName    = lines[2] || '';
+    const dateRange  = lines[3] || '';
+    const colHeader  = lines[7] ? lines[7].split(',') : [];
+    const dataLines  = lines.slice(9).filter(l => l.trim());
+    const dataRows   = dataLines.map(l => {
+      const cols=[]; let cur=''; let inQ=false;
+      for (let i=0; i<l.length; i++) {
+        const c=l[i];
+        if (c==='"'){if(inQ&&l[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
+        else if (c===','&&!inQ){cols.push(cur);cur='';}
+        else cur+=c;
+      }
+      cols.push(cur);
+      return cols;
+    });
+    return { reportName, subName, dateRange, colHeader, dataRows };
+  }
+
+  async function loadFile(f) {
+    currentFile = f;
+    nameEl.textContent = f.name;
+    nameEl.style.display = '';
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const { text } = detectAndDecode(bytes);
+      parsedData = parseGA4(text);
+      sheetEl.textContent  = parsedData.subName;
+      outEl.textContent    = `${parsedData.reportName} ${parsedData.subName}_${parsedData.dateRange}.xlsx`;
+      rowEl.textContent    = parsedData.dataRows.length + '행';
+      preview.style.display = '';
+      btn.disabled = false;
+    } catch(e) {
+      log('ga4Log', '파일 파싱 오류: ' + e.message, 'err');
+    }
+  }
+
+  drop.addEventListener('click', () => inp.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag-over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+  inp.addEventListener('change', () => { if (inp.files[0]) { loadFile(inp.files[0]); inp.value=''; } });
+
+  btn.addEventListener('click', async () => {
+    if (!parsedData) return;
+    btn.disabled = true;
+    document.getElementById('ga4Log').innerHTML = '';
+    try {
+      const { reportName, subName, dateRange, colHeader, dataRows } = parsedData;
+      const outRows = [colHeader, ...dataRows];
+      const wb = XLSX.utils.book_new();
+      const sheetName = subName.slice(0,31) || 'Sheet1';
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(outRows), sheetName);
+      const outName = `${reportName} ${subName}_${dateRange}.xlsx`;
+      XLSX.writeFile(wb, outName);
+      log('ga4Log', `완료: ${outName} (시트: ${sheetName}, ${dataRows.length}행)`, 'info');
+    } catch(e) {
+      log('ga4Log', '오류: ' + e.message, 'err');
+    }
+    btn.disabled = false;
+  });
+})();
+
 </script>
 </body>
 </html>
