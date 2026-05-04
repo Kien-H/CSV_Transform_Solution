@@ -569,6 +569,31 @@ document.querySelectorAll('.nav-item').forEach(btn => {
   });
 });
 
+/* ────────────────────────────────────────────
+   인코딩 변환 폴더/파일 탭 전환
+──────────────────────────────────────────── */
+(function() {
+  const btnFolder = document.getElementById('modeFolder');
+  const btnFile   = document.getElementById('modeFile');
+  const uiFolder  = document.getElementById('uiFolder');
+  const uiFile    = document.getElementById('uiFile');
+  if (!btnFolder || !btnFile) return;
+
+  btnFolder.addEventListener('click', () => {
+    btnFolder.classList.add('active');
+    btnFile.classList.remove('active');
+    uiFolder.style.display = '';
+    uiFile.style.display = 'none';
+  });
+
+  btnFile.addEventListener('click', () => {
+    btnFile.classList.add('active');
+    btnFolder.classList.remove('active');
+    uiFile.style.display = '';
+    uiFolder.style.display = 'none';
+  });
+})();
+
 /* ════════════════════════════════════════════
    CP949 테이블
 ════════════════════════════════════════════ */
